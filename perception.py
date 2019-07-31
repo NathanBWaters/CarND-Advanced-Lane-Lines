@@ -324,34 +324,18 @@ def fit_polynomial(binary_warped):
     return out_img, left_fit_cr, right_fit_cr, left_curverad, right_curverad
 
 
-def add_lanes(image, image_path=''):
+def to_color_binary(image, image_path=''):
     '''
-    Adds lanes to an image and returns the image
+    Converts an image to its color binary
     '''
-    init_globals()
-    global CAMERA_MATRIX, DISTORTION_COEF, PERSPECTIVE_MATRIX, INV_PERSPECTIVE_MATRIX
-
-    print('On image_path: ', image_path)
-    image_size = image.shape[1], image.shape[0]
-
-    # undistort the image
-    undistorted_image = cv2.undistort(image, CAMERA_MATRIX, DISTORTION_COEF,
-                                      None, CAMERA_MATRIX)
-    if image_path:
-        write_output(undistorted_image, image_path, '1_undistorted')
-
     # Convert to HLS color space and separate the S channel
-    # Note: img is the undistorted image
-    hls = cv2.cvtColor(undistorted_image, cv2.COLOR_RGB2HLS)
+    hls = cv2.cvtColor(image, cv2.COLOR_RGB2HLS)
     s_channel = hls[:, :, 2]
     if image_path:
         write_output(s_channel, image_path, '2_saturation_channel')
 
     # Grayscale image
-    # NOTE: we already saw that standard grayscaling lost color information for
-    # the lane lines. Explore gradients in other colors spaces / color channels
-    # to see what might work better
-    gray = cv2.cvtColor(undistorted_image, cv2.COLOR_RGB2GRAY)
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
     if image_path:
         write_output(gray, image_path, '3_grayscale')
 
@@ -388,6 +372,27 @@ def add_lanes(image, image_path=''):
     if image_path:
         write_output(color_binary, image_path, '5_color_binary')
 
+    return color_binary
+
+
+def add_lanes(image, image_path=''):
+    '''
+    Adds lanes to an image and returns the image
+    '''
+    init_globals()
+    global CAMERA_MATRIX, DISTORTION_COEF, PERSPECTIVE_MATRIX, INV_PERSPECTIVE_MATRIX
+
+    print('On image_path: ', image_path)
+    image_size = image.shape[1], image.shape[0]
+
+    # undistort the image
+    undistorted_image = cv2.undistort(image, CAMERA_MATRIX, DISTORTION_COEF,
+                                      None, CAMERA_MATRIX)
+    if image_path:
+        write_output(undistorted_image, image_path, '1_undistorted')
+
+    color_binary = to_color_binary(undistorted_image, image_path=image_path)
+
     # convert the image into a birds-eye view with a perspective matrix
     warped = cv2.warpPerspective(
         color_binary, PERSPECTIVE_MATRIX, image_size, flags=cv2.INTER_LINEAR)
@@ -402,7 +407,7 @@ def add_lanes(image, image_path=''):
     if image_path:
         write_output(binary_warped, image_path, '8_binary_warped')
 
-    out_img, left_curve, right_curve, left_radian, right_radian = (
+    out_img, left_curve, right_curve, left_radius, right_radius = (
         fit_polynomial(binary_warped))
 
     offset = ((1280 / 2) - (right_curve[-1] - left_curve[-1])) * XM_PER_PIX
@@ -420,7 +425,7 @@ def add_lanes(image, image_path=''):
     final_output = Image.fromarray(painted_lane)
     draw = ImageDraw.Draw(final_output)
     font = ImageFont.truetype('/Library/Fonts/Arial.ttf', 50)
-    info_text = "Radius: {}.  Offset: {}".format(left_radian, offset)
+    info_text = "Radius: {}.  Offset: {}".format(left_radius, offset)
     draw.text((0, 0), info_text, font=font)
 
     # Save the image
@@ -485,7 +490,7 @@ def process_test_images():
 
 def get_calibrated_camera(x, y):
     '''
-    Returns a calibrated camera matrix and distorion matrix
+    Returns a calibrated camera matrix and distorion coefficients
     '''
     # Arrays to store object points and image points from all the images.
     objpoints = []  # 3d points in real world space
