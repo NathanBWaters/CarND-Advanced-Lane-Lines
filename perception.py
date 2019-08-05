@@ -199,19 +199,25 @@ def get_perspective_matrix():
     return cv2.getPerspectiveTransform(src, dest)
 
 
-def find_lane_pixels(binary_warped):
+def find_lane_pixels(binary_warped, image_path=''):
     '''
     Finds the lanes using a sliding window moving across a histogram
     '''
     # Take a histogram of the bottom half of the image
     histogram = np.sum(binary_warped[binary_warped.shape[0] // 2:, :], axis=0)
+
     # Create an output image to draw on and visualize the result
     out_img = np.dstack((binary_warped, binary_warped, binary_warped))
     # Find the peak of the left and right halves of the histogram
     # These will be the starting point for the left and right lines
+
+    # if 'test4' in image_path:
+    #     import pdb; pdb.set_trace()
     midpoint = np.int(histogram.shape[0] // 2)
     leftx_base = np.argmax(histogram[:midpoint])
-    rightx_base = np.argmax(histogram[midpoint:]) + midpoint
+    rightx_base = np.argmax(histogram[midpoint: 1100]) + midpoint
+    print('leftx_base: ', leftx_base)
+    print('rightx_base: ', rightx_base)
 
     # HYPERPARAMETERS
     # Choose the number of sliding windows
@@ -270,12 +276,8 @@ def find_lane_pixels(binary_warped):
             rightx_current = np.int(np.mean(nonzerox[good_right_inds]))
 
     # Concatenate the arrays of indices (previously was a list of lists of pixels)
-    try:
-        left_lane_inds = np.concatenate(left_lane_inds)
-        right_lane_inds = np.concatenate(right_lane_inds)
-    except ValueError:
-        # Avoids an error if the above is not implemented fully
-        pass
+    left_lane_inds = np.concatenate(left_lane_inds)
+    right_lane_inds = np.concatenate(right_lane_inds)
 
     # Extract left and right line pixel positions
     leftx = nonzerox[left_lane_inds]
@@ -286,27 +288,26 @@ def find_lane_pixels(binary_warped):
     return leftx, lefty, rightx, righty, out_img
 
 
-def fit_polynomial(binary_warped):
+def fit_polynomial(binary_warped, image_path=''):
     '''
     Fits a polynomial to the image
     '''
     # Find our lane pixels first
-    leftx, lefty, rightx, righty, out_img = find_lane_pixels(binary_warped)
+    leftx, lefty, rightx, righty, out_img = find_lane_pixels(
+        binary_warped, image_path=image_path)
 
-    # Fit a second order polynomial to each using `np.polyfit`
-    left_fit = np.polyfit(lefty, leftx, 2)
-    right_fit = np.polyfit(righty, rightx, 2)
+    # store the curves for our fit to be shown on the image
+    pixel_left_fit = np.polyfit(lefty, leftx, 2)
+    pixel_right_fit = np.polyfit(righty, rightx, 2)
 
     # Generate x and y values for plotting
     ploty = np.linspace(0, binary_warped.shape[0] - 1, binary_warped.shape[0])
-    try:
-        left_fit_cr = left_fit[0] * ploty**2 + left_fit[1] * ploty + left_fit[2]
-        right_fit_cr = right_fit[0] * ploty**2 + right_fit[1] * ploty + right_fit[2]
-    except TypeError:
-        # Avoids an error if `left` and `right_fit` are still none or incorrect
-        print('The function failed to fit a line!')
-        left_fit_cr = 1 * ploty**2 + 1 * ploty
-        right_fit_cr = 1 * ploty**2 + 1 * ploty
+    left_pixel_points = pixel_left_fit[0] * ploty**2 + pixel_left_fit[1] * ploty + pixel_left_fit[2]
+    right_pixel_points = pixel_right_fit[0] * ploty**2 + pixel_right_fit[1] * ploty + pixel_right_fit[2]
+
+    # Fit a second order polynomial to each using `np.polyfit` in meter space
+    left_fit = np.polyfit(lefty * YM_PER_PIX, leftx * XM_PER_PIX, 2)
+    right_fit = np.polyfit(righty * YM_PER_PIX, rightx * XM_PER_PIX, 2)
 
     # Colors in the left and right lane regions
     out_img[lefty, leftx] = [255, 0, 0]
@@ -321,56 +322,115 @@ def fit_polynomial(binary_warped):
         1 + (2 * right_fit[0] * y_eval * YM_PER_PIX + right_fit[1])**2) **
                       1.5) / np.absolute(2 * right_fit[0])
 
-    return out_img, left_fit_cr, right_fit_cr, left_curverad, right_curverad
+    # [-4.01757621e-04 -2.42389445e-02  5.01017705e+02]
+    print('left_fit: ', left_fit)
+    # [ 4.02548309e-04 -8.65974458e-01  1.39781836e+03]
+    print('right_fit: ', right_fit)
+
+    # single number like 1246.5374760353297
+    print('left_curverad: ', left_curverad)
+    # single number like 1246.5374760353297
+    print('right_curverad: ', right_curverad)
+    return (
+        out_img,
+        left_pixel_points,
+        right_pixel_points,
+        left_fit,
+        right_fit,
+        left_curverad,
+        right_curverad)
 
 
 def to_color_binary(image, image_path=''):
     '''
     Converts an image to its color binary
     '''
+    ##########################################
+    # S Channel - good for yellow lines
+    ##########################################
     # Convert to HLS color space and separate the S channel
     hls = cv2.cvtColor(image, cv2.COLOR_RGB2HLS)
     s_channel = hls[:, :, 2]
     if image_path:
-        write_output(s_channel, image_path, '2_saturation_channel')
-
-    # Grayscale image
-    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-    if image_path:
-        write_output(gray, image_path, '3_grayscale')
-
-    # Sobel x
-    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0)  # Take the derivative in x
-    abs_sobelx = np.absolute(
-        sobelx
-    )  # Absolute x derivative to accentuate lines away from horizontal
-    scaled_sobel = np.uint8(255 * abs_sobelx / np.max(abs_sobelx))
-    if image_path:
-        write_output(scaled_sobel, image_path, '4_sobelx')
-
-    # Threshold x gradient
-    thresh_min = 20
-    thresh_max = 100
-    sxbinary = np.zeros_like(scaled_sobel)
-    sxbinary[(scaled_sobel >= thresh_min) & (scaled_sobel <= thresh_max)] = 1
+        write_output(s_channel, image_path, '2_1_saturation_channel')
 
     # Threshold color channel
     s_thresh_min = 140
     s_thresh_max = 255
     s_binary = np.zeros_like(s_channel)
     s_binary[(s_channel >= s_thresh_min) & (s_channel <= s_thresh_max)] = 1
+    if image_path:
+        write_output(s_binary * 255, image_path, '2_2_saturation_binary')
 
+    ##########################################
+    # Grayscale
+    ##########################################
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0)  # Take the derivative in x
+    abs_sobelx = np.absolute(
+        sobelx
+    )  # Absolute x derivative to accentuate lines away from horizontal
+    scaled_sobel = np.uint8(255 * abs_sobelx / np.max(abs_sobelx))
+    if image_path:
+        write_output(sobelx, image_path, '3_1_gray_channel')
+
+    # Threshold x gradient
+    thresh_min = 20
+    thresh_max = 100
+    sxbinary = np.zeros_like(scaled_sobel)
+    sxbinary[(scaled_sobel >= thresh_min) & (scaled_sobel <= thresh_max)] = 1
+    if image_path:
+        write_output(sxbinary * 255, image_path, '3_2_gray_binary')
+
+    ##########################################
+    # L Channel - good for yellow lines
+    ##########################################
+    luv = cv2.cvtColor(image, cv2.COLOR_RGB2LUV)
+    l_channel = luv[:, :, 0]
+    sobel_l = np.absolute(cv2.Sobel(l_channel, cv2.CV_64F, 1, 0))
+    sobel_l = np.uint8(255 * sobel_l / np.max(sobel_l))
+    if image_path:
+        write_output(sobel_l, image_path, '4_1_sobel_l_channel')
+
+    thresh_min = 25
+    thresh_max = 150
+    lbinary = np.zeros_like(scaled_sobel)
+    lbinary[(sobel_l >= thresh_min) & (sobel_l <= thresh_max)] = 1
+    if image_path:
+        write_output(lbinary * 255, image_path, '4_2_l_binary')
+
+    ##########################################
+    # B Channel - good for yellow lines
+    ##########################################
+    lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
+    b_channel = lab[:, :, 2]
+    sobel_b = np.absolute(cv2.Sobel(b_channel, cv2.CV_64F, 1, 0))
+    sobel_b = np.uint8(255 * sobel_b / np.max(sobel_b))
+    if image_path:
+        write_output(sobel_b, image_path, '5_1_sobel_b_channel')
+
+    thresh_min = 50
+    thresh_max = 100
+    b_binary = np.zeros_like(scaled_sobel)
+    b_binary[(sobel_b >= thresh_min) & (sobel_b <= thresh_max)] = 1
+    if image_path:
+        write_output(b_binary * 255, image_path, '5_2_b_binary')
+
+    ##########################################
+    # Combined
+    ##########################################
     # Stack each channel to view their individual contributions in green and
     # blue respectively. This returns a stack of the two binary images, whose
     # components you can see as different colors
-    color_binary = np.dstack((np.zeros_like(sxbinary), sxbinary,
-                              s_binary)) * 255
+    color_binary = np.dstack(
+        (s_binary,
+         b_binary,
+         lbinary,
+         )
+    ) * 255
 
-    # Combine the two binary thresholds
-    combined_binary = np.zeros_like(sxbinary)
-    combined_binary[(s_binary == 1) | (sxbinary == 1)] = 1
     if image_path:
-        write_output(color_binary, image_path, '5_color_binary')
+        write_output(color_binary, image_path, '6_color_binary')
 
     return color_binary
 
@@ -382,7 +442,7 @@ def add_lanes(image, image_path=''):
     init_globals()
     global CAMERA_MATRIX, DISTORTION_COEF, PERSPECTIVE_MATRIX, INV_PERSPECTIVE_MATRIX
 
-    print('On image_path: ', image_path)
+    print('\nOn image_path: ', image_path)
     image_size = image.shape[1], image.shape[0]
 
     # undistort the image
@@ -407,10 +467,13 @@ def add_lanes(image, image_path=''):
     if image_path:
         write_output(binary_warped, image_path, '8_binary_warped')
 
-    out_img, left_curve, right_curve, left_radius, right_radius = (
-        fit_polynomial(binary_warped))
+    out_img, left_pixel_points, right_pixel_points, left_curve, right_curve, left_radius, right_radius = (
+        fit_polynomial(binary_warped, image_path=image_path))
 
-    offset = ((1280 / 2) - (right_curve[-1] - left_curve[-1])) * XM_PER_PIX
+    # the middle of the lane is the mean of the left x value and the right x
+    # value of the two edges
+    middle_of_lane = (right_pixel_points[-1] + left_pixel_points[-1]) / 2
+    offset = (middle_of_lane - (1280 / 2)) * XM_PER_PIX
 
     if image_path:
         write_output(out_img, image_path, '9_fitted_lines')
@@ -418,8 +481,8 @@ def add_lanes(image, image_path=''):
     painted_lane = get_painted_lane(
         undistorted_image,
         binary_warped,
-        left_curve,
-        right_curve)
+        left_pixel_points,
+        right_pixel_points)
 
     # Add text to the final image with curve radius and offset
     final_output = Image.fromarray(painted_lane)
@@ -532,7 +595,7 @@ def process_video(video_path):
     '''
     clip1 = VideoFileClip(video_path)
     clip_output = clip1.fl_image(add_lanes)
-    clip_output.write_videofile('output_images/project_video_output.mp4', audio=False)
+    clip_output.write_videofile('output_images/z_project_video_output.mp4', audio=False)
 
 
 if __name__ == '__main__':
